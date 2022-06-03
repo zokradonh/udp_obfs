@@ -30,32 +30,48 @@
 */
 #include <stdio.h>
 #include <stdlib.h>
-			
+
 #ifdef _WIN32
 #pragma comment(lib, "Ws2_32.lib")
-    #include <winsock2.h>
-    #include <Windows.h>
-	#define sock_t SOCKET
+#include <winsock2.h>
+#include <Windows.h>
+#define sock_t SOCKET
+char loop = 1;
 #else
-    #include <err.h>
-    #include <arpa/inet.h>
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-	#define sock_t int	
+#include <err.h>
+#include <arpa/inet.h>
+#include <signal.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define sock_t int	
+
+volatile sig_atomic_t loop = 1;
+
+void term(int signum)
+{
+    printf("Caught!\n");
+    loop = 0;
+}
+
 #endif
 
-int main(int argc, char *argv[]) {
+
+
+
+
+int main(int argc, char* argv[]) {
     if (argc != 3 && argc != 6) {
         printf("Usage: %s our-ip our-port send-to-ip send-to-port obfs-key\n", argv[0]);
         printf("Usage: %s our-ip our-port             # echo mode\n", argv[0]);
         exit(1);
     }
-    
+
     int key_length = strlen(argv[5]);
-    //char key[key_length];
-    // Should really be 65535 bytes...
     char* key = argv[5];
 
+    printf("Init obfuscation with key[%u]: %s\n", key_length, key);
 
 #ifdef _WIN32
     WORD wVersionRequested;
@@ -72,6 +88,11 @@ int main(int argc, char *argv[]) {
         printf("WSAStartup failed with error: %d\n", err);
         return 1;
     }
+#else
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = term;
+    sigaction(SIGTERM, &action, NULL);
 #endif
 
     // Init socket
@@ -81,9 +102,9 @@ int main(int argc, char *argv[]) {
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = inet_addr(argv[1]);
     a.sin_port = htons(atoi(argv[2]));
-    
+
     // Try to bind to local port
-    if(bind(os, (struct sockaddr *)&a, sizeof(a)) == -1) {
+    if (bind(os, (struct sockaddr*)&a, sizeof(a)) == -1) {
 #ifdef _WIN32
         printf("Can't bind our address (%s:%s). Error: %u\n", argv[1], argv[2], WSAGetLastError());
 #else
@@ -93,7 +114,7 @@ int main(int argc, char *argv[]) {
     }
 
     // TODO: Remove the echo service - although it could be useful for internal application/scripting use
-    if(argc == 5) {
+    if (argc == 6) {
         a.sin_addr.s_addr = inet_addr(argv[3]);
         a.sin_port = htons(atoi(argv[4]));
     }
@@ -101,32 +122,34 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in sa; // The source address of the incoming packet
     struct sockaddr_in da; // The address of the connection initiator
     da.sin_addr.s_addr = 0;
-    
-    while(1) {
+
+    while (loop) {
         char buf[65535];
         int sn = sizeof(sa);
-        int n = recvfrom(os, buf, sizeof(buf), 0, (struct sockaddr *)&sa, &sn);
-        if(n <= 0) continue;
+        int n = recvfrom(os, buf, sizeof(buf), 0, (struct sockaddr*)&sa, &sn);
+        if (n <= 0) continue;
 
-		int i;
-        for(i = 0; i < n; i++)
+        int i;
+        for (i = 0; i < n; i++)
         {
             // Encrypt/decrypt (XOR) in place - no buffers
-            buf[i] = buf[i] ^ key[i%key_length];
+            buf[i] = buf[i] ^ key[i % key_length];
         }
 
-        if(argc == 3) {
+        if (argc == 3) {
             // Echo mode
-            sendto(os, buf, n, 0, (struct sockaddr *)&sa, sn);
-        } else if(sa.sin_addr.s_addr == a.sin_addr.s_addr && sa.sin_port == a.sin_port) { // Packet coming from destination
-            // Check if we actually know what the incoming/local address is
-            if(da.sin_addr.s_addr) {
+            sendto(os, buf, n, 0, (struct sockaddr*)&sa, sn);
+        }
+        else if (sa.sin_addr.s_addr == a.sin_addr.s_addr && sa.sin_port == a.sin_port) { // Packet coming from destination
+         // Check if we actually know what the incoming/local address is
+            if (da.sin_addr.s_addr) {
                 // Send packet to connection initiator
-                sendto(os, buf, n, 0, (struct sockaddr *)&da, sizeof(da));
+                sendto(os, buf, n, 0, (struct sockaddr*)&da, sizeof(da));
             }
-        } else { // Packet coming from source
-            // Send packet to destination port
-            sendto(os, buf, n, 0, (struct sockaddr *)&a, sizeof(a));
+        }
+        else { // Packet coming from source
+         // Send packet to destination port
+            sendto(os, buf, n, 0, (struct sockaddr*)&a, sizeof(a));
             // Save address of connection initiator
             da = sa;
         }
