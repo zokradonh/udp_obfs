@@ -28,30 +28,51 @@
   Ivan Tikhonov, kefeer@brokestream.com
 
 */
-
 #include <stdio.h>
 #include <stdlib.h>
 			
 #ifdef _WIN32
+#pragma comment(lib, "Ws2_32.lib")
     #include <winsock2.h>
+    #include <Windows.h>
 	#define sock_t SOCKET
 #else
+    #include <err.h>
+    #include <arpa/inet.h>
     #include <sys/socket.h>
     #include <netinet/in.h>
 	#define sock_t int	
 #endif
 
 int main(int argc, char *argv[]) {
-    if (argc != 3 && argc != 5) {
-        printf("Usage: %s our-ip our-port send-to-ip send-to-port\n", argv[0]);
+    if (argc != 3 && argc != 6) {
+        printf("Usage: %s our-ip our-port send-to-ip send-to-port obfs-key\n", argv[0]);
         printf("Usage: %s our-ip our-port             # echo mode\n", argv[0]);
         exit(1);
     }
     
-    int key_length = 64;
+    int key_length = strlen(argv[5]);
     //char key[key_length];
     // Should really be 65535 bytes...
-    char* key = "1234567890123456789012345678901234567890123456789012345678901234";
+    char* key = argv[5];
+
+
+#ifdef _WIN32
+    WORD wVersionRequested;
+    WSADATA wsaData;
+    int err;
+
+    /* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+    wVersionRequested = MAKEWORD(2, 2);
+
+    err = WSAStartup(wVersionRequested, &wsaData);
+    if (err != 0) {
+        /* Tell the user that we could not find a usable */
+        /* Winsock DLL.                                  */
+        printf("WSAStartup failed with error: %d\n", err);
+        return 1;
+    }
+#endif
 
     // Init socket
     sock_t os = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -63,7 +84,11 @@ int main(int argc, char *argv[]) {
     
     // Try to bind to local port
     if(bind(os, (struct sockaddr *)&a, sizeof(a)) == -1) {
-        printf("Can't bind our address (%s:%s)\n", argv[1], argv[2]);
+#ifdef _WIN32
+        printf("Can't bind our address (%s:%s). Error: %u\n", argv[1], argv[2], WSAGetLastError());
+#else
+        err(EXIT_FAILURE, NULL);
+#endif
         exit(1);
     }
 
